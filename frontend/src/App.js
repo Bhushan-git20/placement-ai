@@ -1,53 +1,135 @@
-import { useEffect } from "react";
-import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
+import React, { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'sonner';
+import useAuthStore from './store/authStore';
+import Layout from './components/Layout';
+import Login from './pages/auth/Login';
+import Register from './pages/auth/Register';
+import Dashboard from './pages/Dashboard';
+import StudentDashboard from './pages/student/Dashboard';
+import FacultyDashboard from './pages/faculty/Dashboard';
+import RecruiterDashboard from './pages/recruiter/Dashboard';
+import AdminDashboard from './pages/admin/Dashboard';
+import StudentProfile from './pages/student/Profile';
+import Jobs from './pages/Jobs';
+import Applications from './pages/student/Applications';
+import Assessments from './pages/student/Assessments';
+import AICoach from './pages/student/AICoach';
+import './App.css';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+// Protected Route Component
+const ProtectedRoute = ({ children, allowedRoles = [] }) => {
+  const { isAuthenticated, user } = useAuthStore();
+  
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  
+  if (allowedRoles.length > 0 && !allowedRoles.includes(user?.role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  
+  return children;
+};
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
+// Auth Route Component (redirect if already authenticated)
+const AuthRoute = ({ children }) => {
+  const { isAuthenticated } = useAuthStore();
+  
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  
+  return children;
+};
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
+// Dashboard Router based on user role
+const DashboardRouter = () => {
+  const { user } = useAuthStore();
+  
+  switch (user?.role) {
+    case 'student':
+      return <StudentDashboard />;
+    case 'faculty':
+      return <FacultyDashboard />;
+    case 'recruiter':
+      return <RecruiterDashboard />;
+    case 'admin':
+      return <AdminDashboard />;
+    default:
+      return <Dashboard />;
+  }
 };
 
 function App() {
+  const { initialize } = useAuthStore();
+
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
   return (
-    <div className="App">
-      <BrowserRouter>
+    <Router>
+      <div className="App">
         <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
+          {/* Auth routes */}
+          <Route path="/login" element={
+            <AuthRoute>
+              <Login />
+            </AuthRoute>
+          } />
+          <Route path="/register" element={
+            <AuthRoute>
+              <Register />
+            </AuthRoute>
+          } />
+          
+          {/* Protected routes with layout */}
+          <Route path="/" element={
+            <ProtectedRoute>
+              <Layout />
+            </ProtectedRoute>
+          }>
+            {/* Dashboard routes */}
+            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path="dashboard" element={<DashboardRouter />} />
+            
+            {/* Student routes */}
+            <Route path="profile" element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <StudentProfile />
+              </ProtectedRoute>
+            } />
+            <Route path="jobs" element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <Jobs />
+              </ProtectedRoute>
+            } />
+            <Route path="applications" element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <Applications />
+              </ProtectedRoute>
+            } />
+            <Route path="assessments" element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <Assessments />
+              </ProtectedRoute>
+            } />
+            <Route path="ai-coach" element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <AICoach />
+              </ProtectedRoute>
+            } />
+            
+            {/* Common routes */}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
         </Routes>
-      </BrowserRouter>
-    </div>
+        
+        {/* Toast notifications */}
+        <Toaster position="top-right" richColors />
+      </div>
+    </Router>
   );
 }
 
