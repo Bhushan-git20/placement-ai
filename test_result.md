@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Test the placement-ai backend API functionality including GET /api/, POST /api/status, GET /api/status endpoints, MongoDB integration, CORS functionality, and Pydantic model validation"
+user_problem_statement: "Test the placement-ai frontend application functionality including page load, API integration, React Router, UI components, console errors, and performance"
 
 backend:
   - task: "GET /api/ Hello World endpoint"
