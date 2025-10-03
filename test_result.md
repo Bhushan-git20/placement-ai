@@ -258,7 +258,12 @@ metadata:
 
 test_plan:
   current_focus:
-    - "All backend API endpoints tested"
+    - "Homepage load and layout"
+    - "API integration with backend"
+    - "React Router functionality"
+    - "Console error checking"
+    - "UI component rendering"
+    - "Responsive design testing"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
