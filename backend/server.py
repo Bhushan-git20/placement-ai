@@ -49,7 +49,6 @@ class UserRole(str, Enum):
 class JobStatus(str, Enum):
 # AI Integration
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "sk-emergent-b4aC635415a2959C20")
-llm_client = EmergentLLM(api_key=EMERGENT_LLM_KEY)
     ACTIVE = "active"
     CLOSED = "closed"
     DRAFT = "draft"
