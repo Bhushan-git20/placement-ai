@@ -508,11 +508,15 @@ async def parse_resume(
         Return only the JSON object, no additional text.
         """
         
-        response = llm_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1
-        )
+        # Initialize LLM chat for resume parsing
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"resume_parse_{current_user.id}",
+            system_message="You are a resume parsing expert. Extract structured information from resumes and return valid JSON."
+        ).with_model("openai", "gpt-4o-mini")
+        
+        user_message = UserMessage(text=prompt)
+        response = await chat.send_message(user_message)
         
         # Parse AI response
         ai_response = response.choices[0].message.content
