@@ -64,6 +64,8 @@ class InterviewStatus(str, Enum):
     COMPLETED = "completed"
     CANCELLED = "cancelled"
 
+# AI Integration
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "sk-emergent-b4aC635415a2959C20")
 # Pydantic Models
 class UserBase(BaseModel):
     email: EmailStr
