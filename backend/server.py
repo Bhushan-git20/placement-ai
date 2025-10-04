@@ -651,13 +651,15 @@ async def get_job_recommendations(
         Return only the JSON array.
         """
         
-        response = llm_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2
-        )
+        # Initialize LLM chat for job matching
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"job_match_{current_user.id}",
+            system_message="You are a job matching expert. Analyze student profiles and match them with suitable jobs. Return valid JSON."
+        ).with_model("openai", "gpt-4o-mini")
         
-        ai_response = response.choices[0].message.content
+        user_message = UserMessage(text=prompt)
+        ai_response = await chat.send_message(user_message)
         
         try:
             recommendations = json.loads(ai_response)
