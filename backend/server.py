@@ -222,6 +222,307 @@ def require_role(allowed_roles: List[UserRole]):
         if current_user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
+# Student Profile endpoints
+@api_router.get("/students/profile", response_model=StudentProfile)
+async def get_student_profile(current_user: User = Depends(require_role([UserRole.STUDENT]))):
+    profile = await db.student_profiles.find_one({"user_id": current_user.id})
+    if not profile:
+        profile = StudentProfile(user_id=current_user.id)
+        await db.student_profiles.insert_one(profile.dict())
+    return StudentProfile(**profile)
+
+@api_router.put("/students/profile", response_model=StudentProfile)
+async def update_student_profile(
+    profile_data: dict,
+    current_user: User = Depends(require_role([UserRole.STUDENT, UserRole.FACULTY, UserRole.ADMIN]))
+):
+    user_id = current_user.id
+    # Faculty and Admin can update any student profile via user_id in request
+    if current_user.role in [UserRole.FACULTY, UserRole.ADMIN] and "user_id" in profile_data:
+        user_id = profile_data["user_id"]
+    
+    profile_data["updated_at"] = datetime.utcnow()
+    await db.student_profiles.update_one(
+        {"user_id": user_id},
+        {"$set": profile_data}
+    )
+    
+    updated_profile = await db.student_profiles.find_one({"user_id": user_id})
+    return StudentProfile(**updated_profile)
+
+# Company Profile endpoints
+@api_router.post("/companies", response_model=CompanyProfile)
+async def create_company_profile(
+    company_data: dict,
+    current_user: User = Depends(require_role([UserRole.RECRUITER, UserRole.ADMIN]))
+):
+    company = CompanyProfile(**company_data, recruiter_id=current_user.id)
+    await db.company_profiles.insert_one(company.dict())
+    return company
+
+@api_router.get("/companies/my", response_model=List[CompanyProfile])
+async def get_my_companies(current_user: User = Depends(require_role([UserRole.RECRUITER, UserRole.ADMIN]))):
+    companies = await db.company_profiles.find({"recruiter_id": current_user.id}).to_list(100)
+    return [CompanyProfile(**company) for company in companies]
+
+@api_router.get("/companies", response_model=List[CompanyProfile])
+async def get_all_companies():
+    companies = await db.company_profiles.find().to_list(100)
+    return [CompanyProfile(**company) for company in companies]
+
+# Job endpoints
+@api_router.post("/jobs", response_model=Job)
+async def create_job(
+    job_data: dict,
+    current_user: User = Depends(require_role([UserRole.RECRUITER, UserRole.ADMIN]))
+):
+    job = Job(**job_data, recruiter_id=current_user.id)
+    await db.jobs.insert_one(job.dict())
+    return job
+
+@api_router.get("/jobs", response_model=List[Job])
+async def get_jobs(
+    status: Optional[JobStatus] = None,
+    company_id: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50
+):
+    query = {}
+    if status:
+        query["status"] = status
+    if company_id:
+        query["company_id"] = company_id
+    
+    jobs = await db.jobs.find(query).skip(skip).limit(limit).to_list(limit)
+    return [Job(**job) for job in jobs]
+
+@api_router.get("/jobs/{job_id}", response_model=Job)
+async def get_job(job_id: str):
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return Job(**job)
+
+@api_router.put("/jobs/{job_id}", response_model=Job)
+async def update_job(
+    job_id: str,
+    job_data: dict,
+    current_user: User = Depends(require_role([UserRole.RECRUITER, UserRole.ADMIN]))
+):
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Check ownership
+    if current_user.role != UserRole.ADMIN and job["recruiter_id"] != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this job")
+    
+    job_data["updated_at"] = datetime.utcnow()
+    await db.jobs.update_one({"id": job_id}, {"$set": job_data})
+    
+    updated_job = await db.jobs.find_one({"id": job_id})
+    return Job(**updated_job)
+
+# Application endpoints
+@api_router.post("/applications", response_model=Application)
+async def apply_for_job(
+    application_data: dict,
+    current_user: User = Depends(require_role([UserRole.STUDENT]))
+):
+    # Check if job exists and is active
+    job = await db.jobs.find_one({"id": application_data["job_id"]})
+    if not job or job["status"] != JobStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Job not available")
+    
+    # Check if already applied
+    existing_application = await db.applications.find_one({
+        "job_id": application_data["job_id"],
+        "student_id": current_user.id
+    })
+    if existing_application:
+        raise HTTPException(status_code=400, detail="Already applied for this job")
+    
+    application = Application(**application_data, student_id=current_user.id)
+    await db.applications.insert_one(application.dict())
+    return application
+
+@api_router.get("/applications/my", response_model=List[Application])
+async def get_my_applications(current_user: User = Depends(require_role([UserRole.STUDENT]))):
+    applications = await db.applications.find({"student_id": current_user.id}).to_list(100)
+    return [Application(**app) for app in applications]
+
+@api_router.get("/applications/job/{job_id}", response_model=List[Application])
+async def get_job_applications(
+    job_id: str,
+    current_user: User = Depends(require_role([UserRole.RECRUITER, UserRole.ADMIN]))
+):
+    # Verify job ownership
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if current_user.role != UserRole.ADMIN and job["recruiter_id"] != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view applications")
+    
+    applications = await db.applications.find({"job_id": job_id}).to_list(100)
+    return [Application(**app) for app in applications]
+
+@api_router.put("/applications/{application_id}/status", response_model=Application)
+async def update_application_status(
+    application_id: str,
+    status_data: dict,
+    current_user: User = Depends(require_role([UserRole.RECRUITER, UserRole.ADMIN]))
+):
+    application = await db.applications.find_one({"id": application_id})
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    
+    # Verify job ownership
+    job = await db.jobs.find_one({"id": application["job_id"]})
+    if current_user.role != UserRole.ADMIN and job["recruiter_id"] != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this application")
+    
+    status_data["updated_at"] = datetime.utcnow()
+    await db.applications.update_one({"id": application_id}, {"$set": status_data})
+    
+    updated_application = await db.applications.find_one({"id": application_id})
+    return Application(**updated_application)
+
+# Interview endpoints
+@api_router.post("/interviews", response_model=Interview)
+async def schedule_interview(
+    interview_data: dict,
+    current_user: User = Depends(require_role([UserRole.RECRUITER, UserRole.ADMIN]))
+):
+    # Verify application and job ownership
+    application = await db.applications.find_one({"id": interview_data["application_id"]})
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    
+    job = await db.jobs.find_one({"id": application["job_id"]})
+    if current_user.role != UserRole.ADMIN and job["recruiter_id"] != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to schedule interview")
+    
+    interview = Interview(
+        **interview_data,
+        recruiter_id=current_user.id,
+        student_id=application["student_id"]
+    )
+    await db.interviews.insert_one(interview.dict())
+    
+    # Update application status
+    await db.applications.update_one(
+        {"id": interview_data["application_id"]},
+        {"$set": {"status": ApplicationStatus.INTERVIEW_SCHEDULED}}
+    )
+    
+    return interview
+
+@api_router.get("/interviews/my", response_model=List[Interview])
+async def get_my_interviews(current_user: User = Depends(get_current_user)):
+    query = {}
+    if current_user.role == UserRole.STUDENT:
+        query["student_id"] = current_user.id
+    elif current_user.role == UserRole.RECRUITER:
+        query["recruiter_id"] = current_user.id
+    
+    interviews = await db.interviews.find(query).to_list(100)
+    return [Interview(**interview) for interview in interviews]
+
+# Skill Assessment endpoints (Faculty and Admin only)
+@api_router.post("/assessments", response_model=SkillAssessment)
+async def create_skill_assessment(
+    assessment_data: dict,
+    current_user: User = Depends(require_role([UserRole.FACULTY, UserRole.ADMIN]))
+):
+    assessment = SkillAssessment(**assessment_data, faculty_id=current_user.id)
+    await db.skill_assessments.insert_one(assessment.dict())
+    return assessment
+
+@api_router.get("/assessments", response_model=List[SkillAssessment])
+async def get_skill_assessments(current_user: User = Depends(get_current_user)):
+    assessments = await db.skill_assessments.find().to_list(100)
+    return [SkillAssessment(**assessment) for assessment in assessments]
+
+@api_router.post("/assessments/{assessment_id}/submit", response_model=AssessmentResult)
+async def submit_assessment(
+    assessment_id: str,
+    result_data: dict,
+    current_user: User = Depends(require_role([UserRole.STUDENT]))
+):
+    assessment = await db.skill_assessments.find_one({"id": assessment_id})
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    
+    # Calculate score (simple implementation)
+    total_questions = len(assessment["questions"])
+    correct_answers = 0
+    
+    for i, answer in enumerate(result_data.get("answers", [])):
+        if i < total_questions:
+            correct_answer = assessment["questions"][i].get("correct_answer")
+            if answer.get("answer") == correct_answer:
+                correct_answers += 1
+    
+    score = (correct_answers / total_questions) * 100 if total_questions > 0 else 0
+    passed = score >= assessment["passing_score"]
+    
+    result = AssessmentResult(
+        assessment_id=assessment_id,
+        student_id=current_user.id,
+        answers=result_data.get("answers", []),
+        score=score,
+        passed=passed
+    )
+    
+    await db.assessment_results.insert_one(result.dict())
+    return result
+
+@api_router.get("/assessments/results/my", response_model=List[AssessmentResult])
+async def get_my_assessment_results(current_user: User = Depends(require_role([UserRole.STUDENT]))):
+    results = await db.assessment_results.find({"student_id": current_user.id}).to_list(100)
+    return [AssessmentResult(**result) for result in results]
+
+# Admin endpoints
+@api_router.get("/admin/users", response_model=List[UserResponse])
+async def get_all_users(current_user: User = Depends(require_role([UserRole.ADMIN]))):
+    users = await db.users.find().to_list(1000)
+    return [UserResponse(**user) for user in users]
+
+@api_router.put("/admin/users/{user_id}/role")
+async def update_user_role(
+    user_id: str,
+    role_data: dict,
+    current_user: User = Depends(require_role([UserRole.ADMIN]))
+):
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"role": role_data["role"], "updated_at": datetime.utcnow()}}
+    )
+    
+    return {"message": "User role updated successfully"}
+
+@api_router.put("/admin/users/{user_id}/status")
+async def update_user_status(
+    user_id: str,
+    status_data: dict,
+    current_user: User = Depends(require_role([UserRole.ADMIN]))
+):
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"is_active": status_data["is_active"], "updated_at": datetime.utcnow()}}
+    )
+    
+    return {"message": "User status updated successfully"}
+
                 detail="Not enough permissions"
             )
         return current_user
