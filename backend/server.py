@@ -519,7 +519,7 @@ async def parse_resume(
         response = await chat.send_message(user_message)
         
         # Parse AI response
-        ai_response = response.choices[0].message.content
+        ai_response = response
         
         try:
             parsed_data = json.loads(ai_response)
