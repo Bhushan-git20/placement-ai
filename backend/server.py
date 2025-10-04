@@ -227,6 +227,77 @@ def require_role(allowed_roles: List[UserRole]):
         if current_user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not enough permissions"
+            )
+        return current_user
+    return role_checker
+
+# Add your routes to the router instead of directly to app
+@api_router.get("/")
+async def root():
+    return {"message": "Placement AI API - Ready to serve!"}
+
+# Authentication endpoints
+@api_router.post("/auth/register", response_model=UserResponse)
+async def register_user(user_data: UserCreate):
+    # Check if user exists
+    existing_user = await db.users.find_one({"email": user_data.email})
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    # Create user
+    hashed_password = hash_password(user_data.password)
+    user = User(
+        **user_data.dict(exclude={'password'}),
+        hashed_password=hashed_password
+    )
+    
+    await db.users.insert_one(user.dict())
+    
+    # Create profile based on role
+    if user.role == UserRole.STUDENT:
+        profile = StudentProfile(user_id=user.id)
+        await db.student_profiles.insert_one(profile.dict())
+    elif user.role == UserRole.RECRUITER:
+        # Company profile can be created later
+        pass
+    
+    return UserResponse(**user.dict())
+
+@api_router.post("/auth/login", response_model=Token)
+async def login_user(user_data: UserLogin):
+    user = await db.users.find_one({"email": user_data.email})
+    if not user or not verify_password(user_data.password, user["hashed_password"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if not user["is_active"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inactive user"
+        )
+    
+    access_token_expires = timedelta(minutes=30)
+    access_token = create_access_token(
+        data={"sub": user["id"]}, expires_delta=access_token_expires
+    )
+    
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        user=UserResponse(**user)
+    )
+
+@api_router.get("/auth/me", response_model=UserResponse)
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    return UserResponse(**current_user.dict())
+
 # Student Profile endpoints
 @api_router.get("/students/profile", response_model=StudentProfile)
 async def get_student_profile(current_user: User = Depends(require_role([UserRole.STUDENT]))):
