@@ -560,49 +560,38 @@ async def career_chat(
             if profile:
                 context += f", Skills: {', '.join(profile.get('skills', []))}, Degree: {profile.get('degree', 'N/A')}"
         
-        # Build conversation context
-        messages = [
-            {
-                "role": "system",
-                "content": f"""You are a helpful career counselor and placement advisor. 
-                You help students with career guidance, job search strategies, interview preparation, 
-                and skill development. Always provide practical, actionable advice.
-                
-                User Context: {context}
-                
-                Focus on:
-                - Career path recommendations
-                - Skill development suggestions  
-                - Job search strategies
-                - Interview preparation
-                - Resume improvement tips
-                - Industry insights
-                """
-            }
-        ]
+        # Initialize LLM chat for career counseling
+        system_message = f"""You are a helpful career counselor and placement advisor. 
+        You help students with career guidance, job search strategies, interview preparation, 
+        and skill development. Always provide practical, actionable advice.
         
-        # Add conversation history
-        for msg in conversation_history[-10:]:  # Keep last 10 messages for context
-            messages.append({
-                "role": msg.get("role", "user"),
-                "content": msg.get("content", "")
-            })
+        User Context: {context}
         
-        # Add current user message
-        messages.append({
-            "role": "user", 
-            "content": user_message
-        })
+        Focus on:
+        - Career path recommendations
+        - Skill development suggestions  
+        - Job search strategies
+        - Interview preparation
+        - Resume improvement tips
+        - Industry insights
+        """
         
-        # Get AI response
-        response = llm_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            temperature=0.7,
-            max_tokens=500
-        )
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"career_chat_{current_user.id}",
+            system_message=system_message
+        ).with_model("openai", "gpt-4o-mini")
         
-        ai_response = response.choices[0].message.content
+        # Build conversation with history
+        full_message = user_message
+        if conversation_history:
+            # Add recent conversation context
+            recent_history = conversation_history[-5:]  # Keep last 5 messages for context
+            history_text = "\n".join([f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in recent_history])
+            full_message = f"Previous conversation:\n{history_text}\n\nNew question: {user_message}"
+        
+        user_msg = UserMessage(text=full_message)
+        ai_response = await chat.send_message(user_msg)
         
         return {
             "status": "success",
