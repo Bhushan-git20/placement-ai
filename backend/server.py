@@ -473,6 +473,213 @@ async def submit_assessment(
     score = (correct_answers / total_questions) * 100 if total_questions > 0 else 0
     passed = score >= assessment["passing_score"]
     
+# AI Integration endpoints
+@api_router.post("/ai/parse-resume")
+async def parse_resume(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_role([UserRole.STUDENT, UserRole.FACULTY, UserRole.ADMIN]))
+):
+    try:
+        # Read file content
+        file_content = await file.read()
+        
+        # Convert to text for parsing (simplified - in production, use proper document parsing)
+        if file.content_type == "application/pdf":
+            # For PDF files, we'll extract text (simplified approach)
+            text_content = f"Resume file uploaded: {file.filename}"
+        else:
+            text_content = file_content.decode('utf-8') if isinstance(file_content, bytes) else str(file_content)
+        
+        # Use AI to parse resume
+        prompt = f"""
+        Parse the following resume and extract structured information in JSON format:
+        
+        Resume Content:
+        {text_content}
+        
+        Please extract and return a JSON object with the following fields:
+        - full_name: string
+        - email: string
+        - phone: string
+        - skills: array of strings
+        - education: array of objects with (degree, institution, year)
+        - experience: array of objects with (title, company, duration, description)
+        - summary: string (brief professional summary)
+        
+        Return only the JSON object, no additional text.
+        """
+        
+        response = llm_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1
+        )
+        
+        # Parse AI response
+        ai_response = response.choices[0].message.content
+        
+        try:
+            parsed_data = json.loads(ai_response)
+        except json.JSONDecodeError:
+            # Fallback if AI doesn't return valid JSON
+            parsed_data = {
+                "full_name": current_user.full_name,
+                "email": current_user.email,
+                "skills": [],
+                "education": [],
+                "experience": [],
+                "summary": "AI parsing failed - manual review needed"
+            }
+        
+        return {
+            "status": "success",
+            "parsed_data": parsed_data,
+            "ai_response": ai_response
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error parsing resume: {str(e)}")
+
+@api_router.post("/ai/career-chat")
+async def career_chat(
+    chat_data: dict,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        user_message = chat_data.get("message", "")
+        conversation_history = chat_data.get("history", [])
+        
+        # Get user profile for context
+        context = f"User: {current_user.full_name}, Role: {current_user.role}"
+        
+        if current_user.role == UserRole.STUDENT:
+            profile = await db.student_profiles.find_one({"user_id": current_user.id})
+            if profile:
+                context += f", Skills: {', '.join(profile.get('skills', []))}, Degree: {profile.get('degree', 'N/A')}"
+        
+        # Build conversation context
+        messages = [
+            {
+                "role": "system",
+                "content": f"""You are a helpful career counselor and placement advisor. 
+                You help students with career guidance, job search strategies, interview preparation, 
+                and skill development. Always provide practical, actionable advice.
+                
+                User Context: {context}
+                
+                Focus on:
+                - Career path recommendations
+                - Skill development suggestions  
+                - Job search strategies
+                - Interview preparation
+                - Resume improvement tips
+                - Industry insights
+                """
+            }
+        ]
+        
+        # Add conversation history
+        for msg in conversation_history[-10:]:  # Keep last 10 messages for context
+            messages.append({
+                "role": msg.get("role", "user"),
+                "content": msg.get("content", "")
+            })
+        
+        # Add current user message
+        messages.append({
+            "role": "user", 
+            "content": user_message
+        })
+        
+        # Get AI response
+        response = llm_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=500
+        )
+        
+        ai_response = response.choices[0].message.content
+        
+        return {
+            "status": "success",
+            "message": ai_response,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error in career chat: {str(e)}")
+
+@api_router.post("/ai/job-match")
+async def get_job_recommendations(
+    current_user: User = Depends(require_role([UserRole.STUDENT]))
+):
+    try:
+        # Get student profile
+        profile = await db.student_profiles.find_one({"user_id": current_user.id})
+        if not profile:
+            raise HTTPException(status_code=404, detail="Student profile not found")
+        
+        # Get all active jobs
+        jobs = await db.jobs.find({"status": JobStatus.ACTIVE}).to_list(100)
+        
+        # Use AI to match jobs
+        user_skills = profile.get("skills", [])
+        user_degree = profile.get("degree", "")
+        
+        job_summaries = []
+        for job in jobs[:20]:  # Limit for API efficiency
+            job_summaries.append({
+                "id": job["id"],
+                "title": job["title"],
+                "requirements": job.get("requirements", []),
+                "description": job["description"][:200]  # Truncate for API
+            })
+        
+        prompt = f"""
+        Based on the student profile, recommend the most suitable jobs from the list below.
+        
+        Student Profile:
+        - Skills: {', '.join(user_skills)}
+        - Degree: {user_degree}
+        
+        Available Jobs:
+        {json.dumps(job_summaries, indent=2)}
+        
+        Return a JSON array of job IDs ranked by suitability (best matches first), 
+        along with match scores (0-100) and reasons. Format:
+        [
+          {{
+            "job_id": "job_id_here",
+            "match_score": 85,
+            "reasons": ["Skill match: Python, React", "Experience level appropriate"]
+          }}
+        ]
+        
+        Return only the JSON array.
+        """
+        
+        response = llm_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
+        )
+        
+        ai_response = response.choices[0].message.content
+        
+        try:
+            recommendations = json.loads(ai_response)
+        except json.JSONDecodeError:
+            recommendations = []
+        
+        return {
+            "status": "success",
+            "recommendations": recommendations
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error in job matching: {str(e)}")
+
     result = AssessmentResult(
         assessment_id=assessment_id,
         student_id=current_user.id,
