@@ -47,8 +47,6 @@ class UserRole(str, Enum):
     ADMIN = "admin"
 
 class JobStatus(str, Enum):
-# AI Integration
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "sk-emergent-b4aC635415a2959C20")
     ACTIVE = "active"
     CLOSED = "closed"
     DRAFT = "draft"
