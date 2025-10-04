@@ -25,7 +25,7 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # Create the main app without a prefix
-from emergentintegrations import EmergentLLM
+from emergentintegrations.llm.chat import LlmChat, UserMessage
 import base64
 import io
 app = FastAPI(title="Placement AI API", version="1.0.0")
